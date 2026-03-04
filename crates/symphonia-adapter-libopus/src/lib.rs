@@ -199,11 +199,6 @@ impl AudioDecoder for OpusDecoder {
             _ => {}
         }
 
-        let trim_start = packet.trim_start().get() as usize;
-        let trim_end = packet.trim_end().get() as usize;
-
-        self.buf.trim(trim_start, trim_end);
-
         // Pre-skip should only be used for the first packet, after that it should always be 0.
         self.pre_skip = 0;
         Ok(self.buf.as_generic_audio_buffer_ref())
