@@ -15,11 +15,11 @@ keywords = ["audio", "codec", "symphonia", "aac", "opus"]
 [workspace.dependencies]
 fdk-aac = "0.8"
 opusic-sys = { git = "https://github.com/tsar-boomba/opusic-sys", default-features = false }
-symphonia-core = { git = "https://github.com/tsar-boomba/Symphonia", branch = "dev-0.6-no_std-async" }
+symphonia-core = { git = "https://github.com/tsar-boomba/Symphonia", branch = "dap" }
 log = "0.4.28"
 
 # test dependencies
-symphonia = { git = "https://github.com/tsar-boomba/Symphonia", branch = "dev-0.6-no_std-async" }
+symphonia = { git = "https://github.com/tsar-boomba/Symphonia", branch = "dap" }
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
