@@ -1,6 +1,5 @@
-use std::fmt::{Display, Formatter};
+use core::fmt::{Display, Formatter};
 
-use symphonia_core::audio::{Channels, Layout};
 use symphonia_core::errors::Result;
 use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
 
@@ -19,10 +18,10 @@ pub(crate) struct M4AInfo {
 }
 
 impl M4AInfo {
-    fn read_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<M4AType> {
-        let otypeidx = match bs.read_bits_leq32(5)? {
+    async fn read_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<M4AType> {
+        let otypeidx = match bs.read_bits_leq32(5).await? {
             idx if idx < 31 => idx as usize,
-            31 => (bs.read_bits_leq32(6)? + 32) as usize,
+            31 => (bs.read_bits_leq32(6).await? + 32) as usize,
             _ => unreachable!(),
         };
 
@@ -33,18 +32,18 @@ impl M4AInfo {
         }
     }
 
-    fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
-        match bs.read_bits_leq32(4)? {
+    async fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
+        match bs.read_bits_leq32(4).await? {
             idx if idx < 15 => Ok(AAC_SAMPLE_RATES[idx as usize]),
             _ => {
-                let srate = (0xf << 20) & bs.read_bits_leq32(20)?;
+                let srate = (0xf << 20) & bs.read_bits_leq32(20).await?;
                 Ok(srate)
             }
         }
     }
 
-    fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
-        let chidx = bs.read_bits_leq32(4)? as usize;
+    async fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
+        let chidx = bs.read_bits_leq32(4).await? as usize;
         if chidx < AAC_CHANNELS.len() {
             Ok(AAC_CHANNELS[chidx])
         } else {
@@ -52,36 +51,36 @@ impl M4AInfo {
         }
     }
 
-    pub(crate) fn read(&mut self, buf: &[u8]) -> Result<()> {
+    pub(crate) async fn read(&mut self, buf: &[u8]) -> Result<()> {
         let mut bs = BitReaderLtr::new(buf);
 
-        self.otype = Self::read_object_type(&mut bs)?;
-        self.sample_rate = Self::read_sampling_frequency(&mut bs)?;
+        self.otype = Self::read_object_type(&mut bs).await?;
+        self.sample_rate = Self::read_sampling_frequency(&mut bs).await?;
         self.sample_rate_index = sample_rate_index(self.sample_rate);
 
         validate!(self.sample_rate > 0);
 
-        self.channels = Self::read_channel_config(&mut bs)? as u8;
+        self.channels = Self::read_channel_config(&mut bs).await? as u8;
 
         if (self.otype == M4AType::Sbr) || (self.otype == M4AType::PS) {
-            let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
-            self.otype = Self::read_object_type(&mut bs)?;
+            let _ext_srate = Self::read_sampling_frequency(&mut bs).await?;
+            self.otype = Self::read_object_type(&mut bs).await?;
 
             let _ext_chans = if self.otype == M4AType::ER_BSAC {
-                Self::read_channel_config(&mut bs)?
+                Self::read_channel_config(&mut bs).await?
             } else {
                 0
             };
         }
-        let short_frame = bs.read_bool()?;
+        let short_frame = bs.read_bool().await?;
         self.samples = if short_frame { 960 } else { 1024 };
 
         Ok(())
     }
 }
 
-impl std::fmt::Display for M4AInfo {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for M4AInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "MPEG 4 Audio {}, {} Hz, {} channels, {} samples per frame",
@@ -182,7 +181,7 @@ pub(crate) const M4A_TYPES: &[M4AType] = &[
 ];
 
 impl Display for M4AType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", M4A_TYPE_NAMES[*self as usize])
     }
 }
@@ -248,13 +247,3 @@ pub(crate) fn sample_rate_index(sample_rate: u32) -> u8 {
 }
 
 const AAC_CHANNELS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 8];
-
-pub(crate) fn map_to_channels(num_channels: u8) -> Option<Channels> {
-    let channels = match num_channels {
-        1 => Layout::Mono.into_channels(),
-        2 => Layout::Stereo.into_channels(),
-        _ => return None,
-    };
-
-    Some(channels)
-}

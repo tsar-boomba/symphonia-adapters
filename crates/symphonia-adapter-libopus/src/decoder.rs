@@ -1,4 +1,4 @@
-use std::ffi::c_int;
+use core::ffi::c_int;
 
 use log::{error, warn};
 use symphonia_core::errors::{Error, Result};
@@ -51,7 +51,7 @@ impl Decoder {
 
     pub(crate) fn decode(&mut self, input: &[u8], output: &mut [f32]) -> Result<usize> {
         let ptr = match input.len() {
-            0 => std::ptr::null(),
+            0 => core::ptr::null(),
             _ => input.as_ptr(),
         };
         let len = unsafe {

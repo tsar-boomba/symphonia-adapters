@@ -2,25 +2,36 @@
 #![forbid(clippy::unwrap_used)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
 
 mod adts;
 mod meta;
 
-use std::fmt;
+use core::fmt;
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use fdk_aac::dec::{Decoder, DecoderError, Transport};
 use log::warn;
-use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Signal, SignalSpec};
-use symphonia_core::codecs::{
-    CODEC_TYPE_AAC, CodecDescriptor, CodecParameters, DecoderOptions, FinalizeResult,
+use symphonia_core::async_trait;
+use symphonia_core::audio::{
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef
 };
+use symphonia_core::codecs::CodecInfo;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
+use symphonia_core::codecs::audio::{
+    AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
+};
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Error, unsupported_error};
-use symphonia_core::formats::Packet;
-use symphonia_core::support_codec;
+use symphonia_core::packet::Packet;
 
 use crate::adts::construct_adts_header;
 use crate::macros::validate;
-use crate::meta::{M4A_TYPES, M4AInfo, M4AType, map_to_channels, sample_rate_index};
+use crate::meta::{M4A_TYPES, M4AInfo, M4AType, sample_rate_index};
 
 type Result<T> = symphonia_core::errors::Result<T>;
 
@@ -42,10 +53,10 @@ const MAX_SAMPLES: usize = 8192;
 pub struct AacDecoder {
     decoder: Decoder,
     buf: AudioBuffer<i16>,
-    codec_params: CodecParameters,
+    codec_params: AudioCodecParameters,
     m4a_info: M4AInfo,
     m4a_info_validated: bool,
-    pcm: [i16; MAX_SAMPLES],
+    pcm: Vec<i16>,
 }
 
 impl fmt::Debug for AacDecoder {
@@ -87,18 +98,25 @@ fn audio_buffer(m4a_info: &M4AInfo, sample_rate: u32) -> Result<AudioBuffer<i16>
     if m4a_info.channels < 1 || m4a_info.channels > 2 {
         return unsupported_error("aac: unsupported number of channels");
     }
-    let channels = map_to_channels(m4a_info.channels).expect("invalid channels");
+    
+    let channels = Channels::Discrete(m4a_info.channels as u16);
 
-    let spec = SignalSpec::new(sample_rate, channels);
-    Ok(AudioBuffer::new(m4a_info.samples as u64, spec))
+    Ok(AudioBuffer::new(
+        AudioSpec::new(sample_rate, channels.clone()),
+        m4a_info.samples,
+    ))
 }
 
-impl symphonia_core::codecs::Decoder for AacDecoder {
-    fn try_new(params: &CodecParameters, _opts: &DecoderOptions) -> Result<Self> {
+#[async_trait]
+impl RegisterableAudioDecoder for AacDecoder {
+    async fn try_registry_new(
+        params: &AudioCodecParameters,
+        _opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>> {
         let mut m4a_info = M4AInfo::default();
         if let Some(extra_data_buf) = &params.extra_data {
             validate!(extra_data_buf.len() >= 2);
-            m4a_info.read(extra_data_buf)?;
+            m4a_info.read(extra_data_buf).await?;
         } else {
             m4a_info.otype = M4AType::Lc;
             m4a_info.sample_rate = params.sample_rate.unwrap_or_default();
@@ -113,7 +131,7 @@ impl symphonia_core::codecs::Decoder for AacDecoder {
         let decoder = Decoder::new(Transport::Adts);
 
         let buf = audio_buffer(&m4a_info, m4a_info.sample_rate)?;
-        Ok(Self {
+        Ok(Box::new(Self {
             decoder,
             codec_params: params.clone(),
             buf,
@@ -121,25 +139,41 @@ impl symphonia_core::codecs::Decoder for AacDecoder {
             // We should always prefer the m4a info from the decoder even if we were able to parse
             // the extra data from the header since it could be more accurate
             m4a_info_validated: false,
-            pcm: [0; _],
-        })
+            pcm: vec![0; MAX_SAMPLES],
+        }))
     }
 
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[SupportedAudioCodec {
+            id: CODEC_ID_AAC,
+            info: {
+                CodecInfo {
+                    long_name: "Advanced Audio Coding",
+                    short_name: "AAC",
+                    profiles: &[],
+                }
+            },
+        }]
+    }
+}
+
+#[async_trait]
+impl AudioDecoder for AacDecoder {
     fn reset(&mut self) {}
 
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[support_codec!(
-            CODEC_TYPE_AAC,
-            "aac",
-            "Advanced Audio Coding"
-        )]
+    fn codec_info(&self) -> &CodecInfo {
+        &CodecInfo {
+            long_name: "Advanced Audio Coding",
+            short_name: "AAC",
+            profiles: &[],
+        }
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_params(&self) -> &AudioCodecParameters {
         &self.codec_params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    async fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         let adts_header = construct_adts_header(
             self.m4a_info.otype,
             self.m4a_info.sample_rate_index,
@@ -155,7 +189,7 @@ impl symphonia_core::codecs::Decoder for AacDecoder {
             Err(e @ DecoderError::TRANSPORT_SYNC_ERROR) => {
                 warn!("aac: transport sync error: {}", e.message());
                 self.buf.clear();
-                return Ok(self.buf.as_audio_buffer_ref());
+                return Ok(self.buf.as_generic_audio_buffer_ref());
             }
             Err(e) => {
                 return Err(Error::DecodeError(e.message()));
@@ -169,13 +203,20 @@ impl symphonia_core::codecs::Decoder for AacDecoder {
         let pcm = &self.pcm[..capacity];
         self.buf.clear();
 
-        self.buf.render_reserved(None);
+        self.buf.render_uninit(None);
         match self.m4a_info.channels {
             1 => {
-                self.buf.chan_mut(0).copy_from_slice(pcm);
+                let Some(plane) = self.buf.plane_mut(0) else {
+                    unreachable!()
+                };
+
+                plane.copy_from_slice(pcm);
             }
             2 => {
-                let (l, r) = self.buf.chan_pair_mut(0, 1);
+                let Some((l, r)) = self.buf.plane_pair_mut(0, 1) else {
+                    unreachable!()
+                };
+
                 for (i, j) in (0..capacity).step_by(2).enumerate() {
                     l[i] = pcm[j];
                     r[i] = pcm[j + 1];
@@ -184,16 +225,18 @@ impl symphonia_core::codecs::Decoder for AacDecoder {
             _ => {}
         }
 
-        self.buf
-            .trim(packet.trim_start() as usize, packet.trim_end() as usize);
-        Ok(self.buf.as_audio_buffer_ref())
+        self.buf.trim(
+            packet.trim_start().get() as usize,
+            packet.trim_end().get() as usize,
+        );
+        Ok(self.buf.as_generic_audio_buffer_ref())
     }
 
     fn finalize(&mut self) -> FinalizeResult {
         FinalizeResult::default()
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
     }
 }

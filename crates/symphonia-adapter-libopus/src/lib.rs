@@ -2,19 +2,29 @@
 #![forbid(clippy::unwrap_used)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
+#![no_std]
 
-use std::fmt;
+#[macro_use]
+extern crate alloc;
 
+use core::fmt;
+
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use symphonia_core::async_trait;
 use symphonia_core::audio::{
-    AsAudioBufferRef, AudioBuffer, AudioBufferRef, Channels, Layout, Signal, SignalSpec,
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
 };
-use symphonia_core::codecs::{
-    self, CODEC_TYPE_OPUS, CodecDescriptor, CodecParameters, DecoderOptions, FinalizeResult,
+use symphonia_core::codecs::CodecInfo;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
+use symphonia_core::codecs::audio::{
+    AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
 };
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Result, unsupported_error};
-use symphonia_core::formats::Packet;
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::support_codec;
+use symphonia_core::packet::Packet;
 
 use crate::decoder::Decoder;
 
@@ -30,13 +40,13 @@ const MAX_SAMPLES_PER_CHANNEL: usize = MAX_SAMPLE_RATE * 120 / 1000;
 
 /// Symphonia-compatible wrapper for the libopus decoder.
 pub struct OpusDecoder {
-    params: CodecParameters,
+    params: AudioCodecParameters,
     decoder: Decoder,
     buf: AudioBuffer<f32>,
-    pcm: [f32; MAX_SAMPLES_PER_CHANNEL * 2],
+    pcm: Vec<f32>,
     samples_per_channel: usize,
     sample_rate: u32,
-    num_channels: usize,
+    channels: Channels,
     pre_skip: usize,
 }
 
@@ -49,44 +59,50 @@ impl fmt::Debug for OpusDecoder {
             .field("pcm", &self.pcm)
             .field("samples_per_channel", &self.samples_per_channel)
             .field("sample_rate", &self.sample_rate)
-            .field("num_channels", &self.num_channels)
+            .field("channels", &self.channels)
             .field("pre_skip", &self.pre_skip)
             .finish()
     }
 }
 
 // This should probably be handled in the Ogg demuxer, but we'll include it here for now.
-fn parse_pre_skip(buf: &[u8]) -> Result<usize> {
+async fn parse_pre_skip(buf: &[u8]) -> Result<usize> {
     // See https://wiki.xiph.org/OggOpus
 
     let mut reader = BufReader::new(buf);
 
     // Header - "OpusHead"
     let mut header = [0; 8];
-    reader.read_buf_exact(&mut header)?;
+    reader.read_buf_exact(&mut header).await?;
 
     // Version - 1 is the only valid version currently
-    reader.read_byte()?;
+    reader.read_byte().await?;
 
     // Number of channels (same as what we get from the CodecParameters)
-    reader.read_byte()?;
+    reader.read_byte().await?;
 
     // Pre-skip - number of samples (at 48 kHz) to discard from the start of the stream
-    let pre_skip = reader.read_u16()?;
+    let pre_skip = reader.read_u16().await?;
 
     Ok(pre_skip as usize)
 }
 
-impl codecs::Decoder for OpusDecoder {
-    fn try_new(params: &CodecParameters, _opts: &DecoderOptions) -> Result<Self>
+#[async_trait]
+impl RegisterableAudioDecoder for OpusDecoder {
+    async fn try_registry_new(
+        params: &AudioCodecParameters,
+        _opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
     where
         Self: Sized,
     {
-        let num_channels = if let Some(channels) = &params.channels {
-            channels.count()
+        let channels = if let Some(channels) = &params.channels {
+            channels.clone()
         } else {
             return unsupported_error("opus: channels or channel layout is required");
         };
+        let num_channels = channels.count();
+
         let sample_rate = if let Some(sample_rate) = params.sample_rate {
             sample_rate
         } else {
@@ -98,65 +114,83 @@ impl codecs::Decoder for OpusDecoder {
         }
 
         let pre_skip = if let Some(extra_data) = &params.extra_data {
-            parse_pre_skip(extra_data).unwrap_or_default()
+            parse_pre_skip(extra_data).await.unwrap_or_default()
         } else {
             0
         };
 
-        Ok(Self {
+        Ok(Box::new(Self {
             params: params.to_owned(),
             decoder: Decoder::new(sample_rate, num_channels as u32)?,
-            buf: audio_buffer(
-                sample_rate,
-                DEFAULT_SAMPLES_PER_CHANNEL as u64,
-                num_channels,
-            ),
-            pcm: [0.0; _],
+            buf: audio_buffer(sample_rate, DEFAULT_SAMPLES_PER_CHANNEL, channels.clone()),
+            pcm: vec![0.0; MAX_SAMPLES_PER_CHANNEL * 2],
             samples_per_channel: DEFAULT_SAMPLES_PER_CHANNEL,
             sample_rate,
-            num_channels,
+            channels,
             pre_skip,
-        })
+        }))
     }
 
-    fn supported_codecs() -> &'static [CodecDescriptor]
+    fn supported_codecs() -> &'static [SupportedAudioCodec]
     where
         Self: Sized,
     {
-        &[support_codec!(CODEC_TYPE_OPUS, "opus", "Opus")]
+        &[SupportedAudioCodec {
+            id: CODEC_ID_OPUS,
+            info: CodecInfo {
+                long_name: "Opus",
+                short_name: "opus",
+                profiles: &[],
+            },
+        }]
+    }
+}
+
+#[async_trait]
+impl AudioDecoder for OpusDecoder {
+    fn codec_info(&self) -> &CodecInfo {
+        &CodecInfo {
+            long_name: "Opus",
+            short_name: "opus",
+            profiles: &[],
+        }
     }
 
     fn reset(&mut self) {
         self.decoder.reset()
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    async fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         let samples_per_channel = self.decoder.decode(&packet.data, &mut self.pcm)?;
 
-        if samples_per_channel != self.samples_per_channel {
-            self.buf = audio_buffer(
-                self.sample_rate,
-                samples_per_channel as u64,
-                self.num_channels,
-            );
+        if samples_per_channel > self.samples_per_channel {
+            // If new frame had more samples, allocate new buffer
+            self.buf = audio_buffer(self.sample_rate, samples_per_channel, self.channels.clone());
             self.samples_per_channel = samples_per_channel;
         }
 
-        let samples = samples_per_channel * self.num_channels;
+        let samples = samples_per_channel * self.channels.count();
         let pcm = &self.pcm[..samples];
 
         self.buf.clear();
-        self.buf.render_reserved(None);
-        match self.num_channels {
+        self.buf.render_uninit(None);
+        match self.channels.count() {
             1 => {
-                self.buf.chan_mut(0).copy_from_slice(pcm);
+                let Some(plane) = self.buf.plane_mut(0) else {
+                    unreachable!()
+                };
+
+                plane.copy_from_slice(pcm);
             }
             2 => {
-                let (l, r) = self.buf.chan_pair_mut(0, 1);
+                let Some((l, r)) = self.buf.plane_pair_mut(0, 1) else {
+                    unreachable!()
+                };
+
                 for (i, j) in (0..samples).step_by(2).enumerate() {
                     l[i] = pcm[j];
                     r[i] = pcm[j + 1];
@@ -166,40 +200,31 @@ impl codecs::Decoder for OpusDecoder {
         }
 
         self.buf.trim(
-            packet.trim_start() as usize
+            packet.trim_start().get() as usize
                 + (self.pre_skip * self.sample_rate as usize) / DEFAULT_SAMPLE_RATE,
-            packet.trim_end() as usize,
+            packet.trim_end().get() as usize,
         );
+
         // Pre-skip should only be used for the first packet, after that it should always be 0.
         self.pre_skip = 0;
-        Ok(self.buf.as_audio_buffer_ref())
+        Ok(self.buf.as_generic_audio_buffer_ref())
     }
 
     fn finalize(&mut self) -> FinalizeResult {
         FinalizeResult::default()
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
     }
-}
-
-fn map_to_channels(num_channels: usize) -> Option<Channels> {
-    let channels = match num_channels {
-        1 => Layout::Mono.into_channels(),
-        2 => Layout::Stereo.into_channels(),
-        _ => return None,
-    };
-
-    Some(channels)
 }
 
 fn audio_buffer(
     sample_rate: u32,
-    samples_per_channel: u64,
-    num_channels: usize,
+    samples_per_channel: usize,
+    channels: Channels,
 ) -> AudioBuffer<f32> {
-    let channels = map_to_channels(num_channels).expect("invalid channels");
-    let spec = SignalSpec::new(sample_rate, channels);
-    AudioBuffer::new(samples_per_channel, spec)
+    let channel_count = channels.count();
+    let spec = AudioSpec::new(sample_rate, channels);
+    AudioBuffer::new(spec, samples_per_channel * channel_count)
 }

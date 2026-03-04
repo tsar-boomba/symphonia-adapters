@@ -1,4 +1,6 @@
-use std::ops::Range;
+use core::ops::Range;
+
+use alloc::vec::Vec;
 
 use crate::M4AType;
 
