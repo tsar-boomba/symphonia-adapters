@@ -20,6 +20,8 @@ log = { workspace = true }
 [features]
 default = ["bundled"]
 bundled = ["opusic-sys/bundled"]
+no-stack-protector = ["opusic-sys/no-stack-protector"]
+no-simd = ["opusic-sys/no-simd"]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -14,7 +14,7 @@ keywords = ["audio", "codec", "symphonia", "aac", "opus"]
 
 [workspace.dependencies]
 fdk-aac = "0.8"
-opusic-sys = { version = "0.5.8", default-features = false }
+opusic-sys = { git = "https://github.com/tsar-boomba/opusic-sys", default-features = false }
 symphonia-core = { git = "https://github.com/tsar-boomba/Symphonia", branch = "dev-0.6-no_std-async" }
 log = "0.4.28"
 
