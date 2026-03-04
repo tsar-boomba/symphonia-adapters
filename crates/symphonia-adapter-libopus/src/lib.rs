@@ -177,7 +177,7 @@ impl AudioDecoder for OpusDecoder {
         let pcm = &self.pcm[..samples];
 
         self.buf.clear();
-        self.buf.render_uninit(None);
+        self.buf.render_uninit(Some(samples_per_channel));
         match self.channels.count() {
             1 => {
                 let Some(plane) = self.buf.plane_mut(0) else {
@@ -199,11 +199,10 @@ impl AudioDecoder for OpusDecoder {
             _ => {}
         }
 
-        self.buf.trim(
-            packet.trim_start().get() as usize
-                + (self.pre_skip * self.sample_rate as usize) / DEFAULT_SAMPLE_RATE,
-            packet.trim_end().get() as usize,
-        );
+        let trim_start = packet.trim_start().get() as usize;
+        let trim_end = packet.trim_end().get() as usize;
+
+        self.buf.trim(trim_start, trim_end);
 
         // Pre-skip should only be used for the first packet, after that it should always be 0.
         self.pre_skip = 0;
@@ -224,7 +223,6 @@ fn audio_buffer(
     samples_per_channel: usize,
     channels: Channels,
 ) -> AudioBuffer<f32> {
-    let channel_count = channels.count();
     let spec = AudioSpec::new(sample_rate, channels);
-    AudioBuffer::new(spec, samples_per_channel * channel_count)
+    AudioBuffer::new(spec, samples_per_channel)
 }
