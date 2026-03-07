@@ -4,7 +4,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.93"
 authors = ["Austin Schey <aschey13@gmail.com>"]
 repository = "https://github.com/aschey/symphonia-adapters"
 homepage = "https://github.com/aschey/symphonia-adapters"
@@ -13,7 +13,7 @@ categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "symphonia", "aac", "opus"]
 
 [workspace.dependencies]
-fdk-aac = { git = "https://github.com/tsar-boomba/fdk-aac-rs" }
+fdk-aac = { path = "../fdk-aac-rs" }
 opusic-sys = { git = "https://github.com/tsar-boomba/opusic-sys", default-features = false }
 symphonia-core = { git = "https://github.com/tsar-boomba/Symphonia", branch = "dap" }
 log = "0.4.28"
