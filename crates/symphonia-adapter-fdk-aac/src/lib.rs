@@ -78,6 +78,8 @@ impl AacDecoder {
         let capacity = self.decoder.decoded_frame_size();
         let channels = stream_info.numChannels as usize;
         let sample_rate = stream_info.aacSampleRate as u32;
+        self.codec_params.sample_rate = Some(sample_rate);
+        self.codec_params.channels = Some(Channels::Discrete(channels as u16));
 
         self.m4a_info = M4AInfo {
             otype: M4A_TYPES[stream_info.aot as usize],
