@@ -13,7 +13,7 @@ categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "symphonia", "aac", "opus"]
 
 [workspace.dependencies]
-fdk-aac = "0.8"
+fdk-aac = { git = "https://github.com/tsar-boomba/fdk-aac-rs" }
 opusic-sys = { git = "https://github.com/tsar-boomba/opusic-sys", default-features = false }
 symphonia-core = { git = "https://github.com/tsar-boomba/Symphonia", branch = "dap" }
 log = "0.4.28"

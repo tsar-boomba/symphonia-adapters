@@ -15,7 +15,7 @@ keywords.workspace = true
 
 [dependencies]
 symphonia-core = { workspace = true }
-fdk-aac = { workspace = true }
+fdk-aac = { workspace = true, features = ["decoder"] }
 log = { workspace = true }
 
 [package.metadata.docs.rs]
