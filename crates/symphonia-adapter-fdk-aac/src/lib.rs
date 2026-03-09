@@ -130,7 +130,8 @@ impl RegisterableAudioDecoder for AacDecoder {
                 return unsupported_error("aac: channels or channel layout is required");
             };
         }
-        let decoder = Decoder::new(Transport::Adts);
+        let mut decoder = Decoder::new(Transport::Adts);
+        decoder.disable_limiter().map_err(|e| Error::DecodeError(e.message()))?;
 
         let buf = audio_buffer(&m4a_info, m4a_info.sample_rate)?;
         Ok(Box::new(Self {
