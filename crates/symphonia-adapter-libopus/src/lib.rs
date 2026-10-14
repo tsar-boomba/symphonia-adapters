@@ -12,7 +12,6 @@ use core::fmt;
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use symphonia_core::async_trait;
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
 };
@@ -24,7 +23,7 @@ use symphonia_core::codecs::audio::{
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::packet::Packet;
+use symphonia_core::packet::PacketRef;
 
 use crate::decoder::Decoder;
 
@@ -66,30 +65,29 @@ impl fmt::Debug for OpusDecoder {
 }
 
 // This should probably be handled in the Ogg demuxer, but we'll include it here for now.
-async fn parse_pre_skip(buf: &[u8]) -> Result<usize> {
+fn parse_pre_skip(buf: &[u8]) -> Result<usize> {
     // See https://wiki.xiph.org/OggOpus
 
     let mut reader = BufReader::new(buf);
 
     // Header - "OpusHead"
     let mut header = [0; 8];
-    reader.read_buf_exact(&mut header).await?;
+    reader.read_buf_exact(&mut header)?;
 
     // Version - 1 is the only valid version currently
-    reader.read_byte().await?;
+    reader.read_byte()?;
 
     // Number of channels (same as what we get from the CodecParameters)
-    reader.read_byte().await?;
+    reader.read_byte()?;
 
     // Pre-skip - number of samples (at 48 kHz) to discard from the start of the stream
-    let pre_skip = reader.read_u16().await?;
+    let pre_skip = reader.read_u16()?;
 
     Ok(pre_skip as usize)
 }
 
-#[async_trait]
 impl RegisterableAudioDecoder for OpusDecoder {
-    async fn try_registry_new(
+    fn try_registry_new(
         params: &AudioCodecParameters,
         _opts: &AudioDecoderOptions,
     ) -> Result<Box<dyn AudioDecoder>>
@@ -114,7 +112,7 @@ impl RegisterableAudioDecoder for OpusDecoder {
         }
 
         let pre_skip = if let Some(extra_data) = &params.extra_data {
-            parse_pre_skip(extra_data).await.unwrap_or_default()
+            parse_pre_skip(extra_data).unwrap_or_default()
         } else {
             0
         };
@@ -146,7 +144,6 @@ impl RegisterableAudioDecoder for OpusDecoder {
     }
 }
 
-#[async_trait]
 impl AudioDecoder for OpusDecoder {
     fn codec_info(&self) -> &CodecInfo {
         &CodecInfo {
@@ -164,7 +161,7 @@ impl AudioDecoder for OpusDecoder {
         &self.params
     }
 
-    async fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         let samples_per_channel = self.decoder.decode(&packet.data, &mut self.pcm)?;
 
         if samples_per_channel > self.samples_per_channel {

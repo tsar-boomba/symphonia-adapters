@@ -18,10 +18,10 @@ pub(crate) struct M4AInfo {
 }
 
 impl M4AInfo {
-    async fn read_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<M4AType> {
-        let otypeidx = match bs.read_bits_leq32(5).await? {
+    fn read_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<M4AType> {
+        let otypeidx = match bs.read_bits_leq32(5)? {
             idx if idx < 31 => idx as usize,
-            31 => (bs.read_bits_leq32(6).await? + 32) as usize,
+            31 => (bs.read_bits_leq32(6)? + 32) as usize,
             _ => unreachable!(),
         };
 
@@ -32,18 +32,18 @@ impl M4AInfo {
         }
     }
 
-    async fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
-        match bs.read_bits_leq32(4).await? {
+    fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
+        match bs.read_bits_leq32(4)? {
             idx if idx < 15 => Ok(AAC_SAMPLE_RATES[idx as usize]),
             _ => {
-                let srate = (0xf << 20) & bs.read_bits_leq32(20).await?;
+                let srate = (0xf << 20) & bs.read_bits_leq32(20)?;
                 Ok(srate)
             }
         }
     }
 
-    async fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
-        let chidx = bs.read_bits_leq32(4).await? as usize;
+    fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
+        let chidx = bs.read_bits_leq32(4)? as usize;
         if chidx < AAC_CHANNELS.len() {
             Ok(AAC_CHANNELS[chidx])
         } else {
@@ -51,28 +51,28 @@ impl M4AInfo {
         }
     }
 
-    pub(crate) async fn read(&mut self, buf: &[u8]) -> Result<()> {
+    pub(crate) fn read(&mut self, buf: &[u8]) -> Result<()> {
         let mut bs = BitReaderLtr::new(buf);
 
-        self.otype = Self::read_object_type(&mut bs).await?;
-        self.sample_rate = Self::read_sampling_frequency(&mut bs).await?;
+        self.otype = Self::read_object_type(&mut bs)?;
+        self.sample_rate = Self::read_sampling_frequency(&mut bs)?;
         self.sample_rate_index = sample_rate_index(self.sample_rate);
 
         validate!(self.sample_rate > 0);
 
-        self.channels = Self::read_channel_config(&mut bs).await? as u8;
+        self.channels = Self::read_channel_config(&mut bs)? as u8;
 
         if (self.otype == M4AType::Sbr) || (self.otype == M4AType::PS) {
-            let _ext_srate = Self::read_sampling_frequency(&mut bs).await?;
-            self.otype = Self::read_object_type(&mut bs).await?;
+            let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
+            self.otype = Self::read_object_type(&mut bs)?;
 
             let _ext_chans = if self.otype == M4AType::ER_BSAC {
-                Self::read_channel_config(&mut bs).await?
+                Self::read_channel_config(&mut bs)?
             } else {
                 0
             };
         }
-        let short_frame = bs.read_bool().await?;
+        let short_frame = bs.read_bool()?;
         self.samples = if short_frame { 960 } else { 1024 };
 
         Ok(())

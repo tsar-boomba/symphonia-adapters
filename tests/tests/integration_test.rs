@@ -35,7 +35,6 @@ async fn test_decode(file: File) {
             track.codec_params.as_ref().unwrap().audio().unwrap(),
             &Default::default(),
         )
-        .await
         .unwrap();
 
     loop {
@@ -45,10 +44,10 @@ async fn test_decode(file: File) {
             break;
         };
 
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
-        decoder.decode(&packet).await.map(|_| ()).unwrap();
+        decoder.decode(&packet).map(|_| ()).unwrap();
     }
 }
