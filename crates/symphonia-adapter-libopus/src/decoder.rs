@@ -72,6 +72,23 @@ impl Decoder {
         Ok(len as usize)
     }
 
+    pub(crate) fn get_num_samples(&mut self, input: &[u8]) -> Result<usize> {
+        let ptr = match input.len() {
+            0 => return Ok(0),
+            _ => input.as_ptr(),
+        };
+
+        let result = unsafe { opusic_sys::opus_decoder_get_nb_samples(self.ptr, ptr, len(input)?,) };
+
+        if result < 0 {
+            let error_str = error_code_to_str(result);
+            warn!("get_num_samples failed with error code {result}: {error_str}");
+            return Err(Error::DecodeError("opus: get_num_samples failed"));
+        }
+
+        Ok(result as usize)
+    }
+
     pub(crate) fn reset(&mut self) {
         let result =
             unsafe { opusic_sys::opus_decoder_ctl(self.ptr, opusic_sys::OPUS_RESET_STATE) };

@@ -121,7 +121,7 @@ impl RegisterableAudioDecoder for OpusDecoder {
             params: params.to_owned(),
             decoder: Decoder::new(sample_rate, num_channels as u32)?,
             buf: audio_buffer(sample_rate, DEFAULT_SAMPLES_PER_CHANNEL, channels.clone()),
-            pcm: vec![0.0; MAX_SAMPLES_PER_CHANNEL * 2],
+            pcm: vec![0.0; DEFAULT_SAMPLES_PER_CHANNEL * channels.count()],
             samples_per_channel: DEFAULT_SAMPLES_PER_CHANNEL,
             sample_rate,
             channels,
@@ -162,13 +162,16 @@ impl AudioDecoder for OpusDecoder {
     }
 
     fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
-        let samples_per_channel = self.decoder.decode(&packet.data, &mut self.pcm)?;
+        let samples_per_channel = self.decoder.get_num_samples(&packet.data)?;
 
+        // Grow pcm as necessary
         if samples_per_channel > self.samples_per_channel {
-            // If new frame had more samples, allocate new buffer
+            self.pcm.resize(samples_per_channel * self.channels.count(), 0.0);
             self.buf = audio_buffer(self.sample_rate, samples_per_channel, self.channels.clone());
             self.samples_per_channel = samples_per_channel;
         }
+
+        let _ = self.decoder.decode(&packet.data, &mut self.pcm)?;
 
         let samples = samples_per_channel * self.channels.count();
         let pcm = &self.pcm[..samples];
