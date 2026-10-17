@@ -13,7 +13,7 @@ categories.workspace = true
 keywords.workspace = true
 
 [dependencies]
-opusic-sys = { workspace = true }
+opusic-sys = { workspace = true, features = ["fixed-point"] }
 symphonia-core = { workspace = true }
 log = { workspace = true }
 

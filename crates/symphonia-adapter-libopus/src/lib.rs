@@ -41,8 +41,8 @@ const MAX_SAMPLES_PER_CHANNEL: usize = MAX_SAMPLE_RATE * 120 / 1000;
 pub struct OpusDecoder {
     params: AudioCodecParameters,
     decoder: Decoder,
-    buf: AudioBuffer<f32>,
-    pcm: Vec<f32>,
+    buf: AudioBuffer<i16>,
+    pcm: Vec<i16>,
     samples_per_channel: usize,
     sample_rate: u32,
     channels: Channels,
@@ -121,7 +121,7 @@ impl RegisterableAudioDecoder for OpusDecoder {
             params: params.to_owned(),
             decoder: Decoder::new(sample_rate, num_channels as u32)?,
             buf: audio_buffer(sample_rate, DEFAULT_SAMPLES_PER_CHANNEL, channels.clone()),
-            pcm: vec![0.0; DEFAULT_SAMPLES_PER_CHANNEL * channels.count()],
+            pcm: vec![0; DEFAULT_SAMPLES_PER_CHANNEL * channels.count()],
             samples_per_channel: DEFAULT_SAMPLES_PER_CHANNEL,
             sample_rate,
             channels,
@@ -166,7 +166,7 @@ impl AudioDecoder for OpusDecoder {
 
         // Grow pcm as necessary
         if samples_per_channel > self.samples_per_channel {
-            self.pcm.resize(samples_per_channel * self.channels.count(), 0.0);
+            self.pcm.resize(samples_per_channel * self.channels.count(), 0);
             self.buf = audio_buffer(self.sample_rate, samples_per_channel, self.channels.clone());
             self.samples_per_channel = samples_per_channel;
         }
@@ -217,7 +217,7 @@ fn audio_buffer(
     sample_rate: u32,
     samples_per_channel: usize,
     channels: Channels,
-) -> AudioBuffer<f32> {
+) -> AudioBuffer<i16> {
     let spec = AudioSpec::new(sample_rate, channels);
     AudioBuffer::new(spec, samples_per_channel)
 }

@@ -49,13 +49,13 @@ impl Decoder {
         Ok(Self { ptr, channels })
     }
 
-    pub(crate) fn decode(&mut self, input: &[u8], output: &mut [f32]) -> Result<usize> {
+    pub(crate) fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<usize> {
         let ptr = match input.len() {
             0 => core::ptr::null(),
             _ => input.as_ptr(),
         };
         let len = unsafe {
-            opusic_sys::opus_decode_float(
+            opusic_sys::opus_decode(
                 self.ptr,
                 ptr,
                 len(input)?,
