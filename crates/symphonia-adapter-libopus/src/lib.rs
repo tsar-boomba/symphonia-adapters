@@ -4,7 +4,6 @@
 #![doc = include_str!("../README.md")]
 #![no_std]
 
-#[macro_use]
 extern crate alloc;
 
 use core::fmt;
@@ -86,14 +85,9 @@ fn parse_pre_skip(buf: &[u8]) -> Result<usize> {
     Ok(pre_skip as usize)
 }
 
-impl RegisterableAudioDecoder for OpusDecoder {
-    fn try_registry_new(
-        params: &AudioCodecParameters,
-        _opts: &AudioDecoderOptions,
-    ) -> Result<Box<dyn AudioDecoder>>
-    where
-        Self: Sized,
-    {
+impl OpusDecoder {
+    /// Instantiate an Opus decoder for the given codec parameters.
+    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
         let channels = if let Some(channels) = &params.channels {
             channels.clone()
         } else {
@@ -117,16 +111,52 @@ impl RegisterableAudioDecoder for OpusDecoder {
             0
         };
 
-        Ok(Box::new(Self {
+        Ok(Self {
             params: params.to_owned(),
             decoder: Decoder::new(sample_rate, num_channels as u32)?,
-            buf: audio_buffer(sample_rate, DEFAULT_SAMPLES_PER_CHANNEL, channels.clone()),
-            pcm: vec![0; DEFAULT_SAMPLES_PER_CHANNEL * channels.count()],
-            samples_per_channel: DEFAULT_SAMPLES_PER_CHANNEL,
+            // Allocated on the first call to `decode_ref`. Not used by `decode_interleaved`.
+            buf: AudioBuffer::default(),
+            pcm: Vec::new(),
+            samples_per_channel: 0,
             sample_rate,
             channels,
             pre_skip,
-        }))
+        })
+    }
+
+    /// Returns the number of channels in the decoded audio.
+    pub fn num_channels(&self) -> usize {
+        self.channels.count()
+    }
+
+    /// Returns the number of samples per channel in an Opus packet.
+    pub fn packet_samples_per_channel(&mut self, packet: &[u8]) -> Result<usize> {
+        self.decoder.get_num_samples(packet)
+    }
+
+    /// Decode an Opus packet directly into `out` as interleaved samples, bypassing the internal
+    /// audio buffer. Returns the number of samples per channel decoded.
+    ///
+    /// `out` must have room for `packet_samples_per_channel(packet) * num_channels()` samples.
+    /// Unlike `decode`, this does not update the buffer returned by `last_decoded`.
+    pub fn decode_interleaved(&mut self, packet: &[u8], out: &mut [i16]) -> Result<usize> {
+        let samples_per_channel = self.decoder.decode(packet, out)?;
+
+        // Pre-skip should only be used for the first packet, after that it should always be 0.
+        self.pre_skip = 0;
+        Ok(samples_per_channel)
+    }
+}
+
+impl RegisterableAudioDecoder for OpusDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(Self::try_new(params, opts)?))
     }
 
     fn supported_codecs() -> &'static [SupportedAudioCodec]
@@ -164,8 +194,9 @@ impl AudioDecoder for OpusDecoder {
     fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         let samples_per_channel = self.decoder.get_num_samples(&packet.data)?;
 
-        // Grow pcm as necessary
-        if samples_per_channel > self.samples_per_channel {
+        // Allocate pcm on first use, then grow as necessary
+        if self.pcm.is_empty() || samples_per_channel > self.samples_per_channel {
+            let samples_per_channel = samples_per_channel.max(DEFAULT_SAMPLES_PER_CHANNEL);
             self.pcm.resize(samples_per_channel * self.channels.count(), 0);
             self.buf = audio_buffer(self.sample_rate, samples_per_channel, self.channels.clone());
             self.samples_per_channel = samples_per_channel;
